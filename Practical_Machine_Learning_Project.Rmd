@@ -1,0 +1,133 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Tianyu Wang"
+date: "05.08.2020"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+# Overview
+This report analyzes the exercise data of 6 participants of a training study from accelerometers on their belts, forearms, arms and dumbells. The objective is to predict the (correct or incorrect) manner in which they exercised, represented by the `classe` variable in the training data set.
+
+* We start with loading the data and cleaning it to extract only the relevant variables
+* We then proceed with predictive modeling by setting up a cross-validation scheme, creating dedicated training as well as testing data sets and applying three different modeling approaches on the training data
+* To find the best fitting model with the highest prediction accuracy, we compare the different models and their prediction performance on the test data
+* Finally, we apply the best fitting model on the holdout set of new test cases
+
+
+# Preparation
+Load libraries.
+
+```{r setup, message=FALSE}
+library(knitr)
+library(rpart.plot)
+library(caret)
+```
+
+# 1. Loading the Data
+Load and inspect the provided data sets for model training and validation:
+
+```{r data_load}
+training <- read.csv("pml-training.csv")
+validation <- read.csv("pml-testing.csv")
+
+dim(training)
+dim(validation)
+training$classe <- as.factor(training$classe)
+```
+
+The training data contains 160 variables over 19.622 observations, while the validation data has 20 observations over the same variables.
+
+# 2. Cleaning and Preparing the Data
+Before we can perform predictive modeling, we first need to clean and prepare the training data set to eliminate unwanted or irrelevant characteristics. The validation data set is not changed and only used to generate the final quiz predictions.
+
+At the onset, we remove the first seven columns containing **unnecessary identifiers** of the exercise observations which are not relevant for modeling:
+
+```{r id_removal}
+train_prep <- training[, -(1:7)]
+dim(train_prep)
+```
+
+The training data contains multiple columns consisting mostly of **NA values**, so we remove these as they provide no value as features:
+
+```{r na_removal}
+train_prep <- train_prep[, colSums(is.na(train_prep)) == 0]
+dim(train_prep)
+```
+
+Variables with very few unique values relative to the number of samples are undesirable for modeling. We apply the `nearZeroVar` function from `caret` to remove such variables with **near zero variance**:
+
+```{r nzv_removal}
+NZV <- nearZeroVar(train_prep)
+train_prep <- train_prep[, -NZV]
+dim(train_prep)
+```
+After applying the previous steps, we have trimmed down the number of meaningful predictors from 160 to 53. Finally, we perform a **train-test split** on the cleaned and prepared training data (70% for model training and 30% for model testing):
+
+```{r train_test_split}
+set.seed(123456)
+inTrain <- createDataPartition(train_prep$classe, p = 0.7, list = F)
+
+trainSet <- train_prep[inTrain,]
+dim(trainSet)
+testSet <- train_prep[-inTrain,]
+dim(testSet)
+```
+
+# 3. Building Prediction Models
+In this section, we will fit a series of three prediction methods on the prepared training data set to determine the best performing model to be then applied on the validation set eventually. The utilized models are: **Decision tree**, **random forest** and **gradient boosting**.
+
+When training the models, we use **3-fold cross-validation** to improve the model's ability to predict on new data and reduce overfitting:
+
+```{r cross_validation}
+fitControl <- trainControl(method = "cv", number = 3)
+```
+
+## a. Decision Tree
+```{r dt_train}
+mdl_dt <- train(classe ~ ., data = trainSet, method = "rpart", trControl = fitControl)
+rpart.plot(mdl_dt$finalModel)
+```
+```{r dt_predict}
+pred_dt <- predict(mdl_dt, testSet)
+confusionMatrix(pred_dt, testSet$classe)
+```
+
+The decision tree model yields an accuracy of **0.4928** and a high out-of-sample error of **0.5072**, meaning that the outcome cannot reliably predicted this way.
+
+## b. Random Forest
+```{r rf_train}
+mdl_rf <- train(classe ~ ., data = trainSet, method = "rf", trControl = fitControl)
+mdl_rf$finalModel
+```
+
+```{r rf_predict}
+pred_rf <- predict(mdl_rf, testSet)
+confusionMatrix(pred_rf, testSet$classe)
+```
+
+The random forest model yields a very high accuracy of **0.9941** and an out-of-sample error of **0.0059** (which is very good, but could also potentially mean overfitting).
+
+## c. Gradient Boosting
+```{r gbm_train}
+mdl_gbm <- train(classe ~ ., data = trainSet, method = "gbm", verbose = F, trControl = fitControl)
+mdl_gbm$finalModel
+mdl_gbm
+```
+
+```{r gbm_predict}
+pred_gbm <- predict(mdl_gbm, testSet)
+confusionMatrix(pred_gbm, testSet$classe)
+```
+
+The gradient boosting model with default parameters yields an accuracy of **0.9635** and a high out-of-sample error of **0.0365**, which is also very good (could potentially be further increased via hyperparameter tuning, which is out of scope for this assignment though).
+
+# 4. Validating the Best Performing Model
+When looking at these accuracy figures, **random forest** appears to be the best performing model out of the three. Finally, we apply it to the validation data containing the previous unseen 20 test cases, yielding the following **prediction results**:
+
+```{r model_validation}
+pred_rf_validation <- predict(mdl_rf, validation)
+pred_rf_validation
+```
